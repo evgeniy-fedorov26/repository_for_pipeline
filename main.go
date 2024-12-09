@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"container/ring"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -32,6 +33,7 @@ func (r *RingIntBuffer) Push(el int) {
 	defer r.m.Unlock()
 	r.r.Value = el   // Запись значения в текущее положение
 	r.r = r.r.Next() // Переход к следующей позиции
+	log.Printf("Добавлено в буфер: %d", el)
 }
 
 // Get возвращает все элементы буфера и очищает его
@@ -49,6 +51,7 @@ func (r *RingIntBuffer) Get() []int {
 		r.r.Value = nil
 		r.r = r.r.Next()
 	}
+	log.Printf("Буфер очищен, возвращено элементов %d", len(output))
 	return output
 }
 
@@ -73,8 +76,10 @@ func (p *Pipeline) runStage(stage Stage, input <-chan int) <-chan int {
 func (p *Pipeline) Run(source <-chan int) <-chan int {
 	var c <-chan int = source
 	for index := range p.stages {
+		log.Printf("Запуск стадии %d", index+1)
 		c = p.runStage(p.stages[index], c)
 	}
+	log.Println("Пайплайн полностью запущен")
 	return c
 }
 
@@ -90,12 +95,14 @@ func dataSource() (<-chan int, <-chan bool) {
 			scanner.Scan()
 			data = scanner.Text()
 			if strings.EqualFold(data, "exit") {
+				log.Println("Получен сигнал завершения программы")
 				fmt.Println("Программа завершила работу!")
 				close(c)
 				return
 			}
 			i, err := strconv.Atoi(data)
 			if err != nil {
+				log.Println("Ошибка: программа обрабатывает только целые числа!")
 				fmt.Println("Программа обрабатывает только целые числа!")
 				continue
 			}
@@ -114,6 +121,7 @@ func negativeFilterStageInt(done <-chan bool, c <-chan int) <-chan int {
 			select {
 			case data := <-c:
 				if data > 0 {
+					log.Printf("Фильтр отрицательных чисел: пропущено %d", data)
 					select {
 					case convertedIntChan <- data:
 					case <-done:
@@ -137,6 +145,7 @@ func specialFilterStageInt(done <-chan bool, c <-chan int) <-chan int {
 			select {
 			case data := <-c:
 				if data != 0 && data%3 == 0 {
+					log.Printf("Фильтр чисел, кратных 3: пропущено %d", data)
 					select {
 					case filteredIntChan <- data:
 					case <-done:
@@ -180,6 +189,7 @@ func bufferStageInt(done <-chan bool, c <-chan int) <-chan int {
 				// Если в кольцевом буфере есть данные,
 				// выводим содержимое построчно
 				if bufferData != nil {
+					log.Printf("Буфер отправляет %d элементов", len(bufferData))
 					for _, data := range bufferData {
 						select {
 						case bufferedIntChan <- data:
@@ -202,8 +212,10 @@ func consumer(done <-chan bool, c <-chan int) {
 		for {
 			select {
 			case data := <-c:
+				log.Printf("Потребитель обработал данные: %d", data)
 				fmt.Printf("Обработаны данные: %d\n", data)
 			case <-done:
+				log.Println("Потребитель завершил работу")
 				return
 			}
 		}
@@ -211,6 +223,9 @@ func consumer(done <-chan bool, c <-chan int) {
 }
 
 func main() {
+	log.SetOutput(os.Stdout)
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
+
 	source, done := dataSource()
 	pipeline := NewPipeline(done, negativeFilterStageInt, specialFilterStageInt, bufferStageInt)
 	consumer(done, pipeline.Run(source))
